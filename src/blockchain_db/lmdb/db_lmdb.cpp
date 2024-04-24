@@ -251,8 +251,8 @@ namespace
 
   constexpr unsigned int LMDB_DB_COUNT = 23; // Should agree with the number of db's above
 
-  const char* const LMDB_CIRC_SUPPLY = "circ_supply";
-  const char* const LMDB_CIRC_SUPPLY_TALLY = "circ_supply_tally";
+  const char *const LMDB_CIRC_SUPPLY = "circ_supply";
+  const char *const LMDB_CIRC_SUPPLY_TALLY = "circ_supply_tally";
 
   const char zerokey[8] = {0};
   const MDB_val zerokval = {sizeof(zerokey), (void *)zerokey};
@@ -397,30 +397,43 @@ namespace
 #define m_cur_hf_versions m_cursors->hf_versions
 #define m_cur_properties m_cursors->properties
 
+#define m_cur_circ_supply m_cursors->m_txc_circ_supply
+#define m_cur_circ_supply_tally m_cursors->m_txc_circ_supply_tally
+
 namespace cryptonote
 {
 
-  struct mdb_block_info_1
+  typedef struct mdb_block_info_1
   {
     uint64_t bi_height;
     uint64_t bi_timestamp;
     uint64_t bi_coins;
-    uint64_t bi_weight; // a size_t really but we need to keep this struct padding-free
-    difficulty_type bi_diff;
+    uint64_t bi_weight; // a size_t really but we need 32-bit compat
+    uint64_t bi_diff_lo;
+    uint64_t bi_diff_hi;
     crypto::hash bi_hash;
-  };
-
-  struct mdb_block_info_2 : mdb_block_info_1
-  {
     uint64_t bi_cum_rct;
-  };
-
-  struct mdb_block_info : mdb_block_info_2
-  {
     uint64_t bi_long_term_block_weight;
-  };
+    oracle::pricing_record_pre bi_pricing_record;
+    oracle::asset_type_counts bi_cum_rct_by_asset_type;
+  } mdb_block_info_1;
 
-  static_assert(sizeof(mdb_block_info) == sizeof(mdb_block_info_1) + 16, "unexpected mdb_block_info struct sizes");
+  typedef struct mdb_block_info_2
+  {
+    uint64_t bi_height;
+    uint64_t bi_timestamp;
+    uint64_t bi_coins;
+    uint64_t bi_weight; // a size_t really but we need 32-bit compat
+    uint64_t bi_diff_lo;
+    uint64_t bi_diff_hi;
+    crypto::hash bi_hash;
+    uint64_t bi_cum_rct;
+    uint64_t bi_long_term_block_weight;
+    oracle::pricing_record bi_pricing_record;
+    oracle::asset_type_counts bi_cum_rct_by_asset_type;
+  } mdb_block_info_2;
+
+  typedef mdb_block_info_2 mdb_block_info;
 
   struct blk_checkpoint_header
   {
@@ -457,6 +470,29 @@ namespace cryptonote
     crypto::hash tx_hash;
     uint64_t local_index;
   } outtx;
+
+  typedef struct outassettype
+  {
+    uint64_t asset_type_output_index;
+    uint64_t output_id;
+  } outassettype;
+
+  typedef struct circ_supply
+  {
+    crypto::hash tx_hash;
+    uint64_t pricing_record_height;
+    uint64_t source_currency_type;
+    uint64_t dest_currency_type;
+    uint64_t amount_burnt;
+    uint64_t amount_minted;
+  } circ_supply;
+
+  typedef struct circ_supply_tally
+  {
+    bool is_negative;
+    uint64_t amount_hi;
+    uint64_t amount_lo;
+  } circ_supply_tally;
 
   std::atomic<uint64_t> mdb_txn_safe::num_active_txns{0};
   std::atomic_flag mdb_txn_safe::creation_gate = ATOMIC_FLAG_INIT;
@@ -853,6 +889,77 @@ namespace cryptonote
     return threshold_size;
   }
 
+  boost::multiprecision::int128_t import_tally_from_cst(circ_supply_tally *cst)
+  {
+    // rebuild the int128_t tally from the two stored uint64_t integers
+    boost::multiprecision::int128_t tally = cst->amount_hi;
+    tally <<= 64;
+    tally |= cst->amount_lo;
+
+    // The boolean is_negative is kept separate because Boost 128-bit signed integers
+    // use 128 bits of precision plus an extra sign bit. If tally is supposed to be negative, 
+    // need to flip tally to negative to get its correct value for subsequent arithmetic.
+    // See Boost docs on multiprecision ints for more ("Things you should know when using this type"):
+    // https://www.boost.org/doc/libs/1_72_0/libs/multiprecision/doc/html/boost_multiprecision/tut/ints/cpp_int.html
+    if (cst->is_negative)
+      tally = -tally;
+
+    return tally;
+  }
+
+  boost::multiprecision::int128_t read_circulating_supply_data(MDB_cursor *cur_circ_supply_tally, MDB_val idx)
+  {
+    MDB_val vcst;
+    circ_supply_tally cst;
+    int result = mdb_cursor_get(cur_circ_supply_tally, &idx, &vcst, MDB_SET);
+    if (result == MDB_NOTFOUND)
+    {
+      LOG_PRINT_L1("Failed to obtain circulating supply - must be first TX with this asset");
+
+      cst.is_negative = false;
+      cst.amount_hi = 0;
+      cst.amount_lo = 0;
+    }
+    else if (!result)
+    {
+      cst = *(circ_supply_tally *)vcst.mv_data;
+    }
+    else
+    {
+      throw0(DB_ERROR(lmdb_error("Failed to obtain tally for circulating supply: ", result).c_str()));
+    }
+
+    return import_tally_from_cst(&cst);
+  }
+
+  void write_circulating_supply_data(MDB_cursor *cur_circ_supply_tally, MDB_val idx, boost::multiprecision::int128_t tally)
+  {
+    // packing the Boost 128-bit signed integer into 2 uint64's + a sign bit
+    circ_supply_tally cst;
+
+    // From the Boost docs, bitwise operations on negative values "Yields the value, but not the bit pattern, that would result from
+    // performing the operation on a 2's complement integer type." This means in order to keep bit patterns consistent during bitwise ops,
+    // we need to turn a negative Boost 128-bit integer into its positive value, perform bitwise operations on
+    // the positive Boost 128 bit signed integer, and store the sign bit to keep track when reading back from the DB.
+    // https://www.boost.org/doc/libs/1_72_0/libs/multiprecision/doc/html/boost_multiprecision/tut/ints/cpp_int.html
+    if (tally < 0)
+    {
+      tally = -tally;
+      cst.is_negative = true;
+    }
+    else
+      cst.is_negative = false;
+
+    // export into two uint64_t integers to store in LMDB as familiar native types
+    cst.amount_hi = ((tally >> 64) & 0xffffffffffffffff).convert_to<uint64_t>();
+    cst.amount_lo = (tally & 0xffffffffffffffff).convert_to<uint64_t>();
+
+    MDB_val_set(nvs, cst);
+    int result = mdb_cursor_put(cur_circ_supply_tally, &idx, &nvs, 0);
+    if (result)
+      throw0(DB_ERROR(lmdb_error("Failed to update tally for source circulating supply: ", result).c_str()));
+  }
+
   void BlockchainLMDB::add_block(const block &blk, size_t block_weight, uint64_t long_term_block_weight, const difficulty_type &cumulative_difficulty, const uint64_t &coins_generated,
                                  const uint64_t &reserve_reward, uint64_t num_rct_outs, oracle::asset_type_counts &cum_rct_by_asset_type, const crypto::hash &blk_hash)
   {
@@ -1073,7 +1180,7 @@ namespace cryptonote
         throw0(DB_ERROR(lmdb_error("Failed to add prunable tx id to db transaction: ", result).c_str()));
     }
 
-    if (tx.version > 1)
+    if (static_cast<int>(tx.version) > 1)
     {
       MDB_val_set(val_prunable_hash, tx_prunable_hash);
       result = mdb_cursor_put(m_cur_txs_prunable_hash, &val_tx_id, &val_prunable_hash, MDB_APPEND);
@@ -1256,7 +1363,7 @@ namespace cryptonote
         throw1(DB_ERROR(lmdb_error("Error adding removal of tx id to db transaction", result).c_str()));
     }
 
-    if (tx.version > 1)
+    if (static_cast<int>(tx.version) > 1)
     {
       if ((result = mdb_cursor_get(m_cur_txs_prunable_hash, &val_tx_id, NULL, MDB_SET)))
         throw1(DB_ERROR(lmdb_error("Failed to locate prunable hash tx for removal: ", result).c_str()));
@@ -1777,11 +1884,16 @@ namespace cryptonote
 
     lmdb_db_open(txn, LMDB_PROPERTIES, MDB_CREATE, m_properties, "Failed to open db handle for m_properties");
 
+    lmdb_db_open(txn, LMDB_CIRC_SUPPLY, MDB_INTEGERKEY | MDB_CREATE, m_circ_supply, "Failed to open db handle for m_circ_supply");
+
+    lmdb_db_open(txn, LMDB_CIRC_SUPPLY_TALLY, MDB_CREATE, m_circ_supply_tally, "Failed to open db handle for m_circ_supply_tally");
+
     mdb_set_dupsort(txn, m_spent_keys, compare_hash32);
     mdb_set_dupsort(txn, m_block_heights, compare_hash32);
     mdb_set_compare(txn, m_block_checkpoints, compare_uint64);
     mdb_set_dupsort(txn, m_tx_indices, compare_hash32);
-    mdb_set_dupsort(txn, m_output_amounts, compare_uint64);
+    g
+        mdb_set_dupsort(txn, m_output_amounts, compare_uint64);
     mdb_set_dupsort(txn, m_output_txs, compare_uint64);
     mdb_set_dupsort(txn, m_output_blacklist, compare_uint64);
     mdb_set_dupsort(txn, m_block_info, compare_uint64);
@@ -1795,6 +1907,9 @@ namespace cryptonote
     mdb_set_compare(txn, m_alt_blocks, compare_hash32);
     mdb_set_compare(txn, m_service_node_proofs, compare_hash32);
     mdb_set_compare(txn, m_properties, compare_string);
+
+    mdb_set_compare(txn, m_circ_supply, compare_uint64);
+    mdb_set_compare(txn, m_circ_supply_tally, compare_uint64);
 
     if (!(mdb_flags & MDB_RDONLY))
     {
@@ -2918,7 +3033,7 @@ namespace cryptonote
     return ret;
   }
 
-  std::vector<uint64_t> BlockchainLMDB::get_block_info_64bit_fields(uint64_t start_height, size_t count, uint64_t (*extract)(const mdb_block_info *bi_data)) const
+  std::vector<uint64_t> BlockchainLMDB::get_block_info_64bit_fields(uint64_t start_height, size_t count, off_t offset) const
   {
     LOG_PRINT_L3("BlockchainLMDB::" << __func__);
     check_open();
@@ -2964,9 +3079,11 @@ namespace cryptonote
         if (result)
           throw0(DB_ERROR(lmdb_error("Error attempting to retrieve block_info from the db: ", result).c_str()));
       }
-      ret.push_back(extract(static_cast<const mdb_block_info *>(v.mv_data) + (height - range_begin)));
+      const mdb_block_info *bi = ((const mdb_block_info *)v.mv_data) + (height - range_begin);
+      ret.push_back(*(const uint64_t *)(((const char *)bi) + offset));
     }
 
+    TXN_POSTFIX_RDONLY();
     return ret;
   }
 
@@ -4131,34 +4248,34 @@ namespace cryptonote
     memset(&m_tinfo->m_ti_rflags, 0, sizeof(m_tinfo->m_ti_rflags));
   }
 
-uint64_t BlockchainLMDB::add_block(const std::pair<block, blobdata>& blk, size_t block_weight, uint64_t long_term_block_weight, const difficulty_type& cumulative_difficulty, const uint64_t& coins_generated,
-    const uint64_t& reserve_reward, const std::vector<std::pair<transaction, blobdata>>& txs)
-{
-  LOG_PRINT_L3("BlockchainLMDB::" << __func__);
-  check_open();
-  uint64_t m_height = height();
-
-  if (m_height % 1024 == 0)
+  uint64_t BlockchainLMDB::add_block(const std::pair<block, blobdata> &blk, size_t block_weight, uint64_t long_term_block_weight, const difficulty_type &cumulative_difficulty, const uint64_t &coins_generated,
+                                     const uint64_t &reserve_reward, const std::vector<std::pair<transaction, blobdata>> &txs)
   {
-    // for batch mode, DB resize check is done at start of batch transaction
-    if (! m_batch_active && need_resize())
+    LOG_PRINT_L3("BlockchainLMDB::" << __func__);
+    check_open();
+    uint64_t m_height = height();
+
+    if (m_height % 1024 == 0)
     {
-      LOG_PRINT_L0("LMDB memory map needs to be resized, doing that now.");
-      do_resize();
+      // for batch mode, DB resize check is done at start of batch transaction
+      if (!m_batch_active && need_resize())
+      {
+        LOG_PRINT_L0("LMDB memory map needs to be resized, doing that now.");
+        do_resize();
+      }
     }
-  }
 
-  try
-  {
-    BlockchainDB::add_block(blk, block_weight, long_term_block_weight, cumulative_difficulty, coins_generated, reserve_reward, txs);
-  }
-  catch (const DB_ERROR_TXN_START& e)
-  {
-    throw;
-  }
+    try
+    {
+      BlockchainDB::add_block(blk, block_weight, long_term_block_weight, cumulative_difficulty, coins_generated, reserve_reward, txs);
+    }
+    catch (const DB_ERROR_TXN_START &e)
+    {
+      throw;
+    }
 
-  return ++m_height;
-}
+    return ++m_height;
+  }
 
   struct checkpoint_mdb_buffer
   {
