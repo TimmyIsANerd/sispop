@@ -89,16 +89,16 @@ namespace cryptonote
   const command_line::arg_descriptor<bool> arg_db_salvage = {
       "db-salvage", "Try to salvage a blockchain database if it seems corrupted", false};
 
-  BlockchainDB *new_db(const std::string &db_type)
+  BlockchainDB *new_db()
   {
-    if (db_type == "lmdb")
-      return new BlockchainLMDB();
+    return new BlockchainLMDB();
 #if defined(BERKELEY_DB)
     if (db_type == "berkeley")
       return new BlockchainBDB();
 #endif
     return NULL;
   }
+
 
   void BlockchainDB::init_options(boost::program_options::options_description &desc)
   {
@@ -114,47 +114,47 @@ namespace cryptonote
     pop_block(blk, txs);
   }
 
-void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const std::pair<transaction, blobdata_ref>& txp, const crypto::hash* tx_hash_ptr, const crypto::hash* tx_prunable_hash_ptr)
-{
-  const transaction &tx = txp.first;
+  void BlockchainDB::add_transaction(const crypto::hash &blk_hash, const std::pair<transaction, blobdata_ref> &txp, const crypto::hash *tx_hash_ptr, const crypto::hash *tx_prunable_hash_ptr)
+  {
+    const transaction &tx = txp.first;
 
-  bool miner_tx = false;
-  crypto::hash tx_hash, tx_prunable_hash;
-  if (!tx_hash_ptr)
-  {
-    // should only need to compute hash for miner transactions
-    tx_hash = get_transaction_hash(tx);
-    LOG_PRINT_L3("null tx_hash_ptr - needed to compute: " << tx_hash);
-  }
-  else
-  {
-    tx_hash = *tx_hash_ptr;
-  }
- if (static_cast<int>(tx.version) >= 2)
-  {
-    if (!tx_prunable_hash_ptr)
-      tx_prunable_hash = get_transaction_prunable_hash(tx, &txp.second);
-    else
-      tx_prunable_hash = *tx_prunable_hash_ptr;
-  }
-
-  for (const txin_v& tx_input : tx.vin)
-  {
-    if (tx_input.type() == typeid(txin_sispop_key))
+    bool miner_tx = false;
+    crypto::hash tx_hash, tx_prunable_hash;
+    if (!tx_hash_ptr)
     {
-      add_spent_key(boost::get<txin_sispop_key>(tx_input).k_image);
-    }
-    else if (tx_input.type() == typeid(txin_gen))
-    {
-      /* nothing to do here */
-      miner_tx = true;
+      // should only need to compute hash for miner transactions
+      tx_hash = get_transaction_hash(tx);
+      LOG_PRINT_L3("null tx_hash_ptr - needed to compute: " << tx_hash);
     }
     else
     {
-      LOG_PRINT_L1("Unsupported input type, aborting transaction addition");
-      throw std::runtime_error("Unexpected input type, aborting");
+      tx_hash = *tx_hash_ptr;
     }
-  }
+    if (static_cast<int>(tx.version) >= 2)
+    {
+      if (!tx_prunable_hash_ptr)
+        tx_prunable_hash = get_transaction_prunable_hash(tx, &txp.second);
+      else
+        tx_prunable_hash = *tx_prunable_hash_ptr;
+    }
+
+    for (const txin_v &tx_input : tx.vin)
+    {
+      if (tx_input.type() == typeid(txin_sispop_key))
+      {
+        add_spent_key(boost::get<txin_sispop_key>(tx_input).k_image);
+      }
+      else if (tx_input.type() == typeid(txin_gen))
+      {
+        /* nothing to do here */
+        miner_tx = true;
+      }
+      else
+      {
+        LOG_PRINT_L1("Unsupported input type, aborting transaction addition");
+        throw std::runtime_error("Unexpected input type, aborting");
+      }
+    }
 
   uint64_t tx_id = add_transaction_data(blk_hash, txp, tx_hash, tx_prunable_hash, miner_tx);
 
@@ -177,89 +177,84 @@ void BlockchainDB::add_transaction(const crypto::hash& blk_hash, const std::pair
     else
     {
       amount_output_indices[i] = add_output(tx_hash, tx.vout[i], i, tx.unlock_time,
-        static_cast<int>(static_cast<int>(tx.version)) > 1 ? &tx.rct_signatures.outPk[i].mask : NULL);
+        static_cast<int>(tx.version) > 1 ? &tx.rct_signatures.outPk[i].mask : NULL);
     }
   }
-  add_tx_amount_output_indices(tx_id, amount_output_indices);
-}
-
-uint64_t BlockchainDB::add_block( const std::pair<block, blobdata>& blck
-                                , size_t block_weight
-                                , uint64_t long_term_block_weight
-                                , const difficulty_type& cumulative_difficulty
-                                , const uint64_t& coins_generated
-                                , const uint64_t& reserve_reward
-                                , const std::vector<std::pair<transaction, blobdata>>& txs
-                                )
-{
-  const block &blk = blck.first;
-
-  // sanity
-  if (blk.tx_hashes.size() != txs.size())
-    throw std::runtime_error("Inconsistent tx/hashes sizes");
-
-  TIME_MEASURE_START(time1);
-  crypto::hash blk_hash = get_block_hash(blk);
-  TIME_MEASURE_FINISH(time1);
-  time_blk_hash += time1;
-
-  uint64_t prev_height = height();
-
-  // call out to add the transactions
-
-  time1 = epee::misc_utils::get_tick_count();
-
-  uint64_t num_rct_outs = 0;
-  oracle::asset_type_counts num_rct_outs_by_asset_type;
-  blobdata miner_bd = tx_to_blob(blk.miner_tx);
-  add_transaction(blk_hash, std::make_pair(blk.miner_tx, blobdata_ref(miner_bd)));
-
-  if (static_cast<int>(blk.miner_tx.version)  >= 2)
-  {
-    num_rct_outs += blk.miner_tx.vout.size();
-
-    // count the current block's rct outs by asset type
-    for (auto& vout: blk.miner_tx.vout) {
-      std::string asset_type;
-      if (!get_output_asset_type(vout, asset_type))
-        throw std::runtime_error("Failed to get output asset type");
-      num_rct_outs_by_asset_type.add(asset_type, 1);
-    }
+    add_tx_amount_output_indices(tx_id, amount_output_indices);
   }
 
-  int tx_i = 0;
-  crypto::hash tx_hash = crypto::null_hash;
-  for (const std::pair<transaction, blobdata>& tx : txs)
+  uint64_t BlockchainDB::add_block(const std::pair<block, blobdata> &blck, size_t block_weight, uint64_t long_term_block_weight, const difficulty_type &cumulative_difficulty, const uint64_t &coins_generated, const uint64_t &reserve_reward, const std::vector<std::pair<transaction, blobdata>> &txs)
   {
-    tx_hash = blk.tx_hashes[tx_i];
-    add_transaction(blk_hash, tx, &tx_hash);
-    for (const auto &vout: tx.first.vout)
+    const block &blk = blck.first;
+
+    // sanity
+    if (blk.tx_hashes.size() != txs.size())
+      throw std::runtime_error("Inconsistent tx/hashes sizes");
+
+    TIME_MEASURE_START(time1);
+    crypto::hash blk_hash = get_block_hash(blk);
+    TIME_MEASURE_FINISH(time1);
+    time_blk_hash += time1;
+
+    uint64_t prev_height = height();
+
+    // call out to add the transactions
+
+    time1 = epee::misc_utils::get_tick_count();
+
+    uint64_t num_rct_outs = 0;
+    oracle::asset_type_counts num_rct_outs_by_asset_type;
+    blobdata miner_bd = tx_to_blob(blk.miner_tx);
+    add_transaction(blk_hash, std::make_pair(blk.miner_tx, blobdata_ref(miner_bd)));
+
+    if (static_cast<int>(blk.miner_tx.version) >= 2)
     {
-      if (vout.amount == 0) {
-        ++num_rct_outs;
+      num_rct_outs += blk.miner_tx.vout.size();
+
+      // count the current block's rct outs by asset type
+      for (auto &vout : blk.miner_tx.vout)
+      {
         std::string asset_type;
         if (!get_output_asset_type(vout, asset_type))
           throw std::runtime_error("Failed to get output asset type");
         num_rct_outs_by_asset_type.add(asset_type, 1);
       }
     }
-    ++tx_i;
+
+    int tx_i = 0;
+    crypto::hash tx_hash = crypto::null_hash;
+    for (const std::pair<transaction, blobdata> &tx : txs)
+    {
+      tx_hash = blk.tx_hashes[tx_i];
+      add_transaction(blk_hash, tx, &tx_hash);
+      for (const auto &vout : tx.first.vout)
+      {
+        if (vout.amount == 0)
+        {
+          ++num_rct_outs;
+          std::string asset_type;
+          if (!get_output_asset_type(vout, asset_type))
+            throw std::runtime_error("Failed to get output asset type");
+          num_rct_outs_by_asset_type.add(asset_type, 1);
+        }
+      }
+      ++tx_i;
+    }
+    TIME_MEASURE_FINISH(time1);
+    time_add_transaction += time1;
+
+    // call out to subclass implementation to add the block & metadata
+    time1 = epee::misc_utils::get_tick_count();
+    add_block(blk, block_weight, long_term_block_weight, cumulative_difficulty, coins_generated, reserve_reward, num_rct_outs, num_rct_outs_by_asset_type, blk_hash);
+    TIME_MEASURE_FINISH(time1);
+    time_add_block1 += time1;
+
+    m_hardfork->add(blk, prev_height);
+
+    ++num_calls;
+
+    return prev_height;
   }
-  TIME_MEASURE_FINISH(time1);
-  time_add_transaction += time1;
-
-  // call out to subclass implementation to add the block & metadata
-  time1 = epee::misc_utils::get_tick_count();
-  add_block(blk, block_weight, long_term_block_weight, cumulative_difficulty, coins_generated, reserve_reward, num_rct_outs, num_rct_outs_by_asset_type, blk_hash);
-  TIME_MEASURE_FINISH(time1);
-  time_add_block1 += time1;
-
-  m_hardfork->add(blk, prev_height);
-
-  ++num_calls;
-
-  return prev_height;
-}
 
   void BlockchainDB::set_hard_fork(HardFork *hf)
   {
@@ -270,7 +265,22 @@ uint64_t BlockchainDB::add_block( const std::pair<block, blobdata>& blck
   {
     blk = get_top_block();
 
-    remove_block();
+    // Remove reserve reward from reserve tally
+    uint64_t reserve_reward = 0;
+    uint64_t block_height = boost::get<txin_gen>(blk.miner_tx.vin.front()).height;
+    if (blk.major_version >= HF_VERSION_DJED)
+    {
+      uint64_t base_reward;
+      const uint64_t already_generated_coins = get_block_already_generated_coins(block_height - 1);
+      if (!get_block_reward(0, 1, already_generated_coins, base_reward, blk.major_version))
+      {
+        throw DB_ERROR("Failed to get block reward for pop_block");
+      }
+      reserve_reward = get_reserve_reward(base_reward);
+    }
+    MDEBUG("reserve reward removed from block: " << reserve_reward << " height: " << block_height);
+
+    remove_block(reserve_reward);
 
     for (const auto &h : boost::adaptors::reverse(blk.tx_hashes))
     {
@@ -295,8 +305,10 @@ uint64_t BlockchainDB::add_block( const std::pair<block, blobdata>& blck
       }
     }
 
+    const bool miner_tx = tx.vin.size() == 1 && tx.vin[0].type() == typeid(txin_gen);
+
     // need tx as tx.vout has the tx outputs, and the output amounts are needed
-    remove_transaction_data(tx_hash, tx);
+    remove_transaction_data(tx_hash, tx, miner_tx);
   }
 
   block BlockchainDB::get_block_from_height(const uint64_t &height) const
