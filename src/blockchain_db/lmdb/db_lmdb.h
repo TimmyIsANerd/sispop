@@ -41,8 +41,6 @@
 namespace cryptonote
 {
 
-struct mdb_block_info;
-
 struct txindex {
     crypto::hash key;
     tx_data_t data;
@@ -79,6 +77,9 @@ struct mdb_txn_cursors
   MDB_cursor *service_node_proofs;
   MDB_cursor *output_blacklist;
   MDB_cursor *properties;
+
+  MDB_cursor *m_txc_circ_supply;
+  MDB_cursor *m_txc_circ_supply_tally;
 };
 
 struct mdb_rflags
@@ -106,6 +107,8 @@ struct mdb_rflags
   bool m_rf_service_node_data;
   bool m_rf_service_node_proofs;
   bool m_rf_properties;
+  bool m_rf_circ_supply;
+  bool m_rf_circ_supply_tally;
 };
 
 struct mdb_threadinfo
@@ -372,22 +375,22 @@ private:
                 , const crypto::hash& block_hash
               ) override;
 
-  void remove_block() override;
+  virtual void remove_block(const uint64_t& reserve_reward);
 
-  uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash) override;
+  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata_ref>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash, const bool miner_tx);
 
-  void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx) override;
+  virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx, const bool miner_tx);
 
-  uint64_t add_output(const crypto::hash& tx_hash,
+  virtual std::pair<uint64_t, uint64_t> add_output(const crypto::hash& tx_hash,
       const tx_out& tx_output,
       const uint64_t& local_index,
       const uint64_t unlock_time,
       const rct::key *commitment
-      ) override;
+      );
 
-  void add_tx_amount_output_indices(const uint64_t tx_id,
-      const std::vector<uint64_t>& amount_output_indices
-      ) override;
+  virtual void add_tx_amount_output_indices(const uint64_t tx_id,
+      const std::vector<std::pair<uint64_t, uint64_t>>& amount_output_indices
+  );
 
   void remove_tx_outputs(const uint64_t tx_id, const transaction& tx);
 
@@ -415,7 +418,7 @@ private:
 
   uint64_t get_database_size() const override;
 
-  std::vector<uint64_t> get_block_info_64bit_fields(uint64_t start_height, size_t count, uint64_t (*extract)(const mdb_block_info*)) const;
+  std::vector<uint64_t> get_block_info_64bit_fields(uint64_t start_height, size_t count, off_t offset) const;
 
   uint64_t get_max_block_size() override;
   void add_max_block_size(uint64_t sz) override;
@@ -480,6 +483,9 @@ private:
   MDB_dbi m_service_node_proofs;
 
   MDB_dbi m_properties;
+
+  MDB_dbi m_circ_supply;
+  MDB_dbi m_circ_supply_tally;
 
   mutable uint64_t m_cum_size;	// used in batch size estimation
   mutable unsigned int m_cum_count;
