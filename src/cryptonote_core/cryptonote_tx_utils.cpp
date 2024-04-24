@@ -116,6 +116,17 @@ namespace cryptonote
     return true;
   }
 
+  //---------------------------------------------------------------
+  uint64_t get_governance_reward(uint64_t base_reward)
+  {
+    return base_reward / 20; // 5% of base reward
+  }
+  //---------------------------------------------------------------
+  uint64_t get_reserve_reward(uint64_t base_reward)
+  {
+    return base_reward / 5; // 20% of base reward
+  }
+
   bool validate_governance_reward_key(uint64_t height, const std::string &governance_wallet_address_str, size_t output_index, const crypto::public_key &output_key, const cryptonote::network_type nettype)
   {
     keypair gov_key = get_deterministic_keypair_from_height(height);
