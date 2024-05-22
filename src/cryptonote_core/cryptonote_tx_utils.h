@@ -53,6 +53,9 @@ namespace cryptonote
   uint64_t get_portion_of_reward                (uint64_t portions, uint64_t total_service_node_reward);
   uint64_t service_node_reward_formula          (uint64_t base_reward, uint8_t hard_fork_version);
 
+  uint64_t get_governance_reward(uint64_t base_reward);
+  uint64_t get_reserve_reward(uint64_t base_reward);
+
   struct sispop_miner_tx_context // NOTE(sispop): All the custom fields required by Sispop to use construct_miner_tx
   {
     sispop_miner_tx_context(network_type type = MAINNET, service_nodes::block_winner const &block_winner = service_nodes::null_block_winner) : nettype(type), block_winner(std::move(block_winner)) { }
@@ -227,6 +230,13 @@ namespace cryptonote
     const uint64_t seed_height, const crypto::hash& seed_hash);
   crypto::hash get_block_longhash(const Blockchain *pb, const block& b, const uint64_t height, const int miners);
   void get_block_longhash_reorg(const uint64_t split_height);
+
+  
+  bool get_tx_asset_types(const transaction& tx, const crypto::hash &txid, std::string& source, std::string& destination, const bool is_miner_tx);
+  bool get_tx_type(const std::string& source, const std::string& destination, transaction_type& type);
+
+  bool tx_pr_height_valid(const uint64_t current_height, const uint64_t pr_height, const crypto::hash& tx_hash);
+  
 
   void get_reserve_info(
       const std::vector<std::pair<std::string, std::string>> &circ_amounts,

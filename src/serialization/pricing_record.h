@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2019, The Monero Project
+// Copyright (c) 2019, Haven Protocol
 // 
 // All rights reserved.
 // 
@@ -34,65 +34,94 @@
 
 #include "serialization.h"
 #include "debug_archive.h"
-#include "crypto/chacha.h"
-#include "crypto/crypto.h"
-#include "crypto/hash.h"
+#include "oracle/pricing_record.h"
+#include "cryptonote_config.h"
 
 // read
 template <template <bool> class Archive>
-bool do_serialize(Archive<false> &ar, std::vector<crypto::signature> &v)
+bool do_serialize(Archive<false> &ar, oracle::pricing_record &pr, uint8_t version)
 {
-  size_t cnt = v.size();
-  v.clear();
+  if (version < HF_VERSION_DJED)
+  {
+    // very basic sanity check
+    if (ar.remaining_bytes() < sizeof(oracle::pricing_record_v1)) {
+      return false;
+    }
 
-  // very basic sanity check
-  if (ar.remaining_bytes() < cnt*sizeof(crypto::signature)) {
-    ar.set_fail();
-    return false;
+    oracle::pricing_record_v1 pr_v1;
+    ar.serialize_blob(&pr_v1, sizeof(oracle::pricing_record_v1), "");
+    if (!ar.good())
+      return false;
+
+    if (!pr_v1.write_to_pr(pr))
+      return false;
   }
+  else
+  {
+    // very basic sanity check
+    if (ar.remaining_bytes() < sizeof(oracle::pricing_record)) {
+      return false;
+    }
 
-  v.reserve(cnt);
-  for (size_t i = 0; i < cnt; i++) {
-    v.resize(i+1);
-    ar.serialize_blob(&(v[i]), sizeof(crypto::signature), "");
+    ar.serialize_blob(&pr, sizeof(oracle::pricing_record), "");
     if (!ar.good())
       return false;
   }
+
   return true;
 }
 
 // write
 template <template <bool> class Archive>
-bool do_serialize(Archive<true> &ar, std::vector<crypto::signature> &v)
+bool do_serialize(Archive<true> &ar, oracle::pricing_record &pr, uint8_t version)
 {
-  if (0 == v.size()) return true;
   ar.begin_string();
-  size_t cnt = v.size();
-  for (size_t i = 0; i < cnt; i++) {
-    ar.serialize_blob(&(v[i]), sizeof(crypto::signature), "");
-    if (!ar.good())
+
+  if (version < HF_VERSION_DJED)
+  {
+    oracle::pricing_record_v1 pr_v1;
+    if (!pr_v1.read_from_pr(pr))
       return false;
+    ar.serialize_blob(&pr_v1, sizeof(oracle::pricing_record_v1), "");
   }
+  else
+  {
+    ar.serialize_blob(&pr, sizeof(oracle::pricing_record), "");
+  }
+
+  if (!ar.good())
+    return false;
   ar.end_string();
   return true;
 }
 
-BLOB_SERIALIZER(crypto::chacha_iv);
-BLOB_SERIALIZER(crypto::hash);
-BLOB_SERIALIZER(crypto::hash8);
-BLOB_SERIALIZER(crypto::public_key);
-BLOB_SERIALIZER(crypto::secret_key);
-BLOB_SERIALIZER(crypto::key_derivation);
-BLOB_SERIALIZER(crypto::key_image);
-BLOB_SERIALIZER(crypto::signature);
-BLOB_SERIALIZER(crypto::ed25519_public_key);
-BLOB_SERIALIZER(crypto::ed25519_signature);
-VARIANT_TAG(debug_archive, crypto::hash, "hash");
-VARIANT_TAG(debug_archive, crypto::hash8, "hash8");
-VARIANT_TAG(debug_archive, crypto::public_key, "public_key");
-VARIANT_TAG(debug_archive, crypto::secret_key, "secret_key");
-VARIANT_TAG(debug_archive, crypto::key_derivation, "key_derivation");
-VARIANT_TAG(debug_archive, crypto::key_image, "key_image");
-VARIANT_TAG(debug_archive, crypto::signature, "signature");
-VARIANT_TAG(debug_archive, crypto::ed25519_public_key, "ed25519_public_key");
-VARIANT_TAG(debug_archive, crypto::ed25519_signature, "ed25519_signature");
+// read
+template <template <bool> class Archive>
+bool do_serialize(Archive<false> &ar, oracle::pricing_record_v1 &pr, uint8_t version)
+{
+  // very basic sanity check
+  if (ar.remaining_bytes() < sizeof(oracle::pricing_record_v1)) {
+    return false;
+  }
+
+  ar.serialize_blob(&pr, sizeof(oracle::pricing_record_v1), "");
+  if (!ar.good())
+    return false;
+
+  return true;
+}
+
+// write
+template <template <bool> class Archive>
+bool do_serialize(Archive<true> &ar, oracle::pricing_record_v1 &pr, uint8_t version)
+{
+  ar.begin_string();
+  ar.serialize_blob(&pr, sizeof(oracle::pricing_record_v1), "");
+  if (!ar.good())
+    return false;
+  ar.end_string();
+  return true;
+}
+
+BLOB_SERIALIZER(oracle::pricing_record);
+BLOB_SERIALIZER(oracle::pricing_record_v1);

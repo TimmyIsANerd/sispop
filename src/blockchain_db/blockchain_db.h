@@ -125,6 +125,7 @@ struct output_data_t
   uint64_t           unlock_time;  //!< the output's unlock time (or height)
   uint64_t           height;       //!< the height of the block which created the output
   rct::key           commitment;   //!< the output's amount commitment (for spend verification)
+  char               asset_type[8];   //!< the asset type of the output
 };
 #pragma pack(pop)
 
@@ -397,8 +398,11 @@ private:
    *
    * If any of this cannot be done, the subclass should throw the corresponding
    * subclass of DB_EXCEPTION
+   *
+   * @param reserve_reward the amount of sispop to be removed from the reserve
+   *
    */
-  virtual void remove_block() = 0;
+  virtual void remove_block(const uint64_t& reserve_reward) = 0;
 
   /**
    * @brief store the transaction and its metadata
@@ -420,7 +424,7 @@ private:
    * @param tx_prunable_hash the hash of the prunable part of the transaction
    * @return the transaction ID
    */
-  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash) = 0;
+  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata_ref>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash, const bool miner_tx) = 0;
 
   /**
    * @brief remove data about a transaction
@@ -438,7 +442,7 @@ private:
    * @param tx_hash the hash of the transaction to be removed
    * @param tx the transaction
    */
-  virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx) = 0;
+  virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx, const bool miner_tx) = 0;
 
   /**
    * @brief store an output
@@ -466,7 +470,7 @@ private:
    * @param commitment the rct commitment to the output amount
    * @return amount output index
    */
-  virtual uint64_t add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time, const rct::key *commitment) = 0;
+  virtual std::pair<uint64_t, uint64_t> add_output(const crypto::hash& tx_hash, const tx_out& tx_output, const uint64_t& local_index, const uint64_t unlock_time, const rct::key *commitment) = 0;
 
   /**
    * @brief store amount output indices for a tx's outputs
@@ -481,7 +485,7 @@ private:
    * @param tx_id ID of the transaction containing these outputs
    * @param amount_output_indices the amount output indices of the transaction
    */
-  virtual void add_tx_amount_output_indices(const uint64_t tx_id, const std::vector<uint64_t>& amount_output_indices) = 0;
+  virtual void add_tx_amount_output_indices(const uint64_t tx_id, const std::vector<std::pair<uint64_t, uint64_t>>& amount_output_indices) = 0;
 
   /**
    * @brief store a spent key

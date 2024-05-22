@@ -163,7 +163,6 @@ namespace cryptonote
   bool get_transaction_hash(const transaction &t, crypto::hash &res, size_t &blob_size);
   bool get_transaction_hash(const transaction &t, crypto::hash &res, size_t *blob_size);
   bool calculate_transaction_prunable_hash(const transaction& t, const cryptonote::blobdata_ref *blob, crypto::hash& res);
-  crypto::hash get_transaction_prunable_hash(const transaction &t, const cryptonote::blobdata *blob = NULL);
   crypto::hash get_transaction_prunable_hash(const transaction& t, const cryptonote::blobdata_ref *blob = NULL);
   bool calculate_transaction_hash(const transaction &t, crypto::hash &res, size_t *blob_size);
   crypto::hash get_pruned_transaction_hash(const transaction &t, const crypto::hash &pruned_data_hash);
@@ -177,6 +176,7 @@ namespace cryptonote
   bool get_inputs_money_amount(const transaction &tx, uint64_t &money);
   uint64_t get_outs_money_amount(const transaction &tx);
   uint64_t get_outs_money_amount(const transaction &tx, const std::string &asset_type = "SISPOP");
+  bool get_output_public_key(const cryptonote::tx_out& out, crypto::public_key& output_public_key);
   bool check_inputs_types_supported(const transaction &tx);
   bool check_outs_valid(const transaction &tx);
   bool parse_amount(uint64_t &amount, const std::string &str_amount);

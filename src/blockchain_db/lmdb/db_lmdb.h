@@ -41,45 +41,71 @@
 namespace cryptonote
 {
 
-struct mdb_block_info;
-
 struct txindex {
     crypto::hash key;
     tx_data_t data;
 };
 
-struct mdb_txn_cursors
+typedef struct mdb_txn_cursors
 {
-  MDB_cursor *blocks;
-  MDB_cursor *block_heights;
-  MDB_cursor *block_info;
-  MDB_cursor *block_checkpoints;
+  MDB_cursor *m_txc_blocks;
+  MDB_cursor *m_txc_block_heights;
+  MDB_cursor *m_txc_block_info;
 
-  MDB_cursor *output_txs;
-  MDB_cursor *output_amounts;
+  MDB_cursor *m_txc_output_txs;
+  MDB_cursor *m_txc_output_amounts;
+  MDB_cursor *m_txc_output_types;
 
-  MDB_cursor *txs;
-  MDB_cursor *txs_pruned;
-  MDB_cursor *txs_prunable;
-  MDB_cursor *txs_prunable_hash;
-  MDB_cursor *txs_prunable_tip;
-  MDB_cursor *tx_indices;
-  MDB_cursor *tx_outputs;
+  MDB_cursor *m_txc_txs;
+  MDB_cursor *m_txc_txs_pruned;
+  MDB_cursor *m_txc_txs_prunable;
+  MDB_cursor *m_txc_txs_prunable_hash;
+  MDB_cursor *m_txc_txs_prunable_tip;
+  MDB_cursor *m_txc_tx_indices;
+  MDB_cursor *m_txc_tx_outputs;
 
-  MDB_cursor *spent_keys;
+  MDB_cursor *m_txc_spent_keys;
 
-  MDB_cursor *txpool_meta;
-  MDB_cursor *txpool_blob;
+  MDB_cursor *m_txc_txpool_meta;
+  MDB_cursor *m_txc_txpool_blob;
 
-  MDB_cursor *alt_blocks;
+  MDB_cursor *m_txc_alt_blocks;
 
-  MDB_cursor *hf_versions;
+  MDB_cursor *m_txc_hf_versions;
 
+  MDB_cursor *m_txc_properties;
+
+  MDB_cursor *m_txc_circ_supply;
+  MDB_cursor *m_txc_circ_supply_tally;
   MDB_cursor *service_node_data;
   MDB_cursor *service_node_proofs;
-  MDB_cursor *output_blacklist;
-  MDB_cursor *properties;
-};
+  MDB_cursor *block_checkpoints;
+} mdb_txn_cursors;
+
+#define m_cur_blocks	m_cursors->m_txc_blocks
+#define m_cur_block_heights	m_cursors->m_txc_block_heights
+#define m_cur_block_info	m_cursors->m_txc_block_info
+#define m_cur_output_txs	m_cursors->m_txc_output_txs
+#define m_cur_output_amounts	m_cursors->m_txc_output_amounts
+#define m_cur_output_types m_cursors->m_txc_output_types
+#define m_cur_txs	m_cursors->m_txc_txs
+#define m_cur_txs_pruned	m_cursors->m_txc_txs_pruned
+#define m_cur_txs_prunable	m_cursors->m_txc_txs_prunable
+#define m_cur_txs_prunable_hash	m_cursors->m_txc_txs_prunable_hash
+#define m_cur_txs_prunable_tip	m_cursors->m_txc_txs_prunable_tip
+#define m_cur_tx_indices	m_cursors->m_txc_tx_indices
+#define m_cur_tx_outputs	m_cursors->m_txc_tx_outputs
+#define m_cur_spent_keys	m_cursors->m_txc_spent_keys
+#define m_cur_txpool_meta	m_cursors->m_txc_txpool_meta
+#define m_cur_txpool_blob	m_cursors->m_txc_txpool_blob
+#define m_cur_alt_blocks	m_cursors->m_txc_alt_blocks
+#define m_cur_hf_versions	m_cursors->m_txc_hf_versions
+#define m_cur_properties	m_cursors->m_txc_properties
+
+#define m_cur_circ_supply       m_cursors->m_txc_circ_supply
+#define m_cur_circ_supply_tally m_cursors->m_txc_circ_supply_tally
+#define m_cur_block_checkpoints m_cursors->block_checkpoints
+
 
 struct mdb_rflags
 {
@@ -106,6 +132,8 @@ struct mdb_rflags
   bool m_rf_service_node_data;
   bool m_rf_service_node_proofs;
   bool m_rf_properties;
+  bool m_rf_circ_supply;
+  bool m_rf_circ_supply_tally;
 };
 
 struct mdb_threadinfo
@@ -238,6 +266,8 @@ public:
   block get_top_block() const override;
 
   uint64_t height() const override;
+
+  virtual std::vector<std::pair<std::string, std::string>> get_circulating_supply() const;
 
   bool tx_exists(const crypto::hash& h) const override;
   bool tx_exists(const crypto::hash& h, uint64_t& tx_index) const override;
@@ -372,26 +402,26 @@ private:
                 , const crypto::hash& block_hash
               ) override;
 
-  void remove_block() override;
+  virtual void remove_block(const uint64_t& reserve_reward);
 
-  uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash) override;
+  virtual uint64_t add_transaction_data(const crypto::hash& blk_hash, const std::pair<transaction, blobdata_ref>& tx, const crypto::hash& tx_hash, const crypto::hash& tx_prunable_hash, const bool miner_tx);
 
-  void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx) override;
+  virtual void remove_transaction_data(const crypto::hash& tx_hash, const transaction& tx, const bool miner_tx);
 
-  uint64_t add_output(const crypto::hash& tx_hash,
+  virtual std::pair<uint64_t, uint64_t> add_output(const crypto::hash& tx_hash,
       const tx_out& tx_output,
       const uint64_t& local_index,
       const uint64_t unlock_time,
       const rct::key *commitment
-      ) override;
+      );
 
-  void add_tx_amount_output_indices(const uint64_t tx_id,
-      const std::vector<uint64_t>& amount_output_indices
-      ) override;
+  virtual void add_tx_amount_output_indices(const uint64_t tx_id,
+      const std::vector<std::pair<uint64_t, uint64_t>>& amount_output_indices
+  );
 
   void remove_tx_outputs(const uint64_t tx_id, const transaction& tx);
 
-  void remove_output(const uint64_t amount, const uint64_t& out_index);
+  void remove_output(const uint64_t amount, const uint64_t& out_index, const std::string& output_asset_type, const uint64_t& asset_type_output_id);
 
   void prune_outputs(uint64_t amount) override;
 
@@ -415,7 +445,7 @@ private:
 
   uint64_t get_database_size() const override;
 
-  std::vector<uint64_t> get_block_info_64bit_fields(uint64_t start_height, size_t count, uint64_t (*extract)(const mdb_block_info*)) const;
+  std::vector<uint64_t> get_block_info_64bit_fields(uint64_t start_height, size_t count, off_t offset) const;
 
   uint64_t get_max_block_size() override;
   void add_max_block_size(uint64_t sz) override;
@@ -433,6 +463,7 @@ private:
   void migrate_4_5(cryptonote::network_type nettype);
   void migrate_5_6();
   void migrate_6_7();
+  void migrate_7_8();
 
   void cleanup_batch();
 
@@ -465,6 +496,7 @@ private:
   MDB_dbi m_output_txs;
   MDB_dbi m_output_amounts;
   MDB_dbi m_output_blacklist;
+  MDB_dbi m_output_types;
 
   MDB_dbi m_spent_keys;
 
@@ -480,6 +512,9 @@ private:
   MDB_dbi m_service_node_proofs;
 
   MDB_dbi m_properties;
+
+  MDB_dbi m_circ_supply;
+  MDB_dbi m_circ_supply_tally;
 
   mutable uint64_t m_cum_size;	// used in batch size estimation
   mutable unsigned int m_cum_count;

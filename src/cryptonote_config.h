@@ -91,6 +91,7 @@ static_assert(STAKING_PORTIONS % 12 == 0, "Use a multiple of twelve, so that it 
 #define DYNAMIC_FEE_REFERENCE_TRANSACTION_WEIGHT_V12 ((uint64_t)240000) // Only v12 (v13 switches back)
 
 #define DIFFICULTY_TARGET_V2 120 // seconds
+#define DIFFICULTY_TARGET_V1 60  // 
 #define DIFFICULTY_WINDOW_V2 60
 #define DIFFICULTY_BLOCKS_COUNT_V2 (DIFFICULTY_WINDOW_V2 + 1) // added +1 to make N=N
 #define TARGET_BLOCK_TIME 5 * 60
@@ -186,6 +187,8 @@ static_assert(STAKING_PORTIONS % 12 == 0, "Use a multiple of twelve, so that it 
 #define MAX_TX_EXTRA_SIZE 1060
 
 // New constants are intended to go here
+#define FINAL_SUBSIDY_PER_MINUTE                        ((uint64_t)300000000000) // 3 * pow(10, 11)
+#define EMISSION_SPEED_FACTOR_PER_MINUTE                (21)
 namespace config
 {
   uint64_t const DEFAULT_FEE_ATOMIC_XMR_PER_KB = 500; // Just a placeholder!  Change me!
