@@ -46,6 +46,9 @@
 #include "crypto/hash.h"
 #include "ringct/rctTypes.h"
 #include "device/device.hpp"
+#include "oracle/pricing_record.h"
+#include "serialization/pricing_record.h"
+
 
 namespace cryptonote
 {
@@ -467,13 +470,34 @@ namespace cryptonote
     uint64_t timestamp;
     crypto::hash prev_id;
     uint32_t nonce;
+    oracle::pricing_record pricing_record;
 
     BEGIN_SERIALIZE()
-    VARINT_FIELD(major_version)
-    VARINT_FIELD(minor_version)
-    VARINT_FIELD(timestamp)
-    FIELD(prev_id)
-    FIELD(nonce)
+      VARINT_FIELD(major_version)
+      VARINT_FIELD(minor_version)
+      VARINT_FIELD(timestamp)
+      FIELD(prev_id)
+      FIELD(nonce)
+
+      if (major_version >= HF_VERSION_DJED)
+      {
+        FIELD(pricing_record)
+      }
+      else
+      {
+        oracle::pricing_record_v1 pr_v1;
+        if (!typename Archive<W>::is_saving())
+        {
+          FIELD(pr_v1)
+          pr_v1.write_to_pr(pricing_record);
+        }
+        else
+        {
+          pr_v1.read_from_pr(pricing_record);
+          FIELD(pr_v1)
+        }
+      }
+
     END_SERIALIZE()
   };
 
